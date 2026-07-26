@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
@@ -14,12 +15,16 @@ import orjson
 
 TokenType: TypeAlias = Literal["input", "output", "cached"]
 
-_PRICE_FIELDS: Mapping[TokenType, str] = MappingProxyType(
+_TOKEN_TYPE_ALIASES: Mapping[TokenType, str] = MappingProxyType(
     {
         "input": "input_cost_per_token",
         "output": "output_cost_per_token",
         "cached": "cache_read_input_token_cost",
     }
+)
+_TOKEN_PRICE_FIELD_PATTERN = re.compile(
+    r"(?:^|_)cost_per_(?:[a-z0-9]+_)*token(?:_|$)"
+    r"|(?:^|_)token_cost(?:_|$)"
 )
 _METADATA_KEYS = frozenset({"sample_spec"})
 _PRICES_RESOURCE = "model_prices_and_context_window.json"
@@ -39,12 +44,12 @@ class NotFound(ModelPriceError):
 
 
 class InvalidTokenTypeError(ModelPriceError):
-    """token 類型不是 input、output 或 cached。"""
+    """token 類型不是 alias 或合法的 per-token 價格欄位。"""
 
     def __init__(self, token_type: object) -> None:
         super().__init__(
             f"Invalid token type: {token_type!r}. "
-            "Expected one of: input, output, cached."
+            "Expected input, output, cached, or a scalar per-token price field."
         )
 
 
@@ -60,10 +65,28 @@ class InvalidTokenCountError(ModelPriceError):
 class PriceUnavailableError(ModelPriceError):
     """模型存在, 但沒有指定 token 類型的價格。"""
 
-    def __init__(self, model: str, token_type: TokenType) -> None:
+    def __init__(self, model: str, token_type: str) -> None:
         super().__init__(
             f"Price unavailable for model {model!r} and token type {token_type!r}."
         )
+
+
+def _is_token_price_field_name(field: object) -> bool:
+    """判斷欄位名稱的計價單位是否為 token。"""
+    return isinstance(field, str) and bool(_TOKEN_PRICE_FIELD_PATTERN.search(field))
+
+
+def _as_token_price(value: object) -> Decimal | None:
+    """將合法的非負有限 scalar token 價格轉為 Decimal。"""
+    if type(value) not in (int, float):
+        return None
+    try:
+        price = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not price.is_finite() or price < 0:
+        return None
+    return price
 
 
 def _load_prices() -> Mapping[str, Mapping[str, object]]:
@@ -91,6 +114,12 @@ def _load_prices() -> Mapping[str, Mapping[str, object]]:
                 raise ModelPriceError(
                     "The bundled model price data contains an invalid model entry."
                 )
+            for field, value in details.items():
+                if _is_token_price_field_name(field) and _as_token_price(value) is None:
+                    raise ModelPriceError(
+                        f"Model {model!r} contains an invalid token price "
+                        f"field {field!r}."
+                    )
             prices[model] = MappingProxyType(details)
 
         _PRICES = MappingProxyType(prices)
@@ -112,35 +141,53 @@ def calculate_cost(
     Args:
         model: 價格資料中的模型識別名稱。
         tokens: 非負整數 token 數量。
-        token_type: ``input``、``output`` 或 ``cached``。
+        token_type: ``input``、``output``、``cached`` 或模型支援的原始
+            per-token 價格欄位。
 
     Returns:
         未量化、未四捨五入的美元成本。
 
     Raises:
         InvalidTokenCountError: ``tokens`` 不是非負整數。
-        InvalidTokenTypeError: ``token_type`` 不在支援範圍。
+        InvalidTokenTypeError: ``token_type`` 不是合法的 token 價格欄位。
         NotFound: 找不到模型。
         PriceUnavailableError: 模型沒有指定類型的 token 價格。
     """
     if type(tokens) is not int or tokens < 0:
         raise InvalidTokenCountError(tokens)
-    if token_type not in _PRICE_FIELDS:
+    if not isinstance(token_type, str):
         raise InvalidTokenTypeError(token_type)
 
     prices = _load_prices()
     if model not in prices:
         raise NotFound(model)
 
-    price_field = _PRICE_FIELDS[token_type]
-    price = prices[model].get(price_field)
-    if price is None:
+    price_field = _TOKEN_TYPE_ALIASES.get(token_type, token_type)
+    if not _is_token_price_field_name(price_field):
+        raise InvalidTokenTypeError(token_type)
+    if price_field not in prices[model]:
         raise PriceUnavailableError(model, token_type)
 
-    try:
-        return Decimal(str(price)) * tokens
-    except (InvalidOperation, TypeError, ValueError) as exc:
-        raise PriceUnavailableError(model, token_type) from exc
+    price = _as_token_price(prices[model][price_field])
+    if price is None:
+        raise PriceUnavailableError(model, token_type)
+    return price * tokens
+
+
+def get_available_token_price_fields(model: str) -> tuple[str, ...]:
+    """回傳模型支援且值有效的原始 per-token 價格欄位。"""
+    prices = _load_prices()
+    if model not in prices:
+        raise NotFound(model)
+
+    return tuple(
+        sorted(
+            field
+            for field, value in prices[model].items()
+            if _is_token_price_field_name(field)
+            and _as_token_price(value) is not None
+        )
+    )
 
 
 def get_model_details(model: str) -> dict[str, object]:

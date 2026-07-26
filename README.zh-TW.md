@@ -24,17 +24,17 @@
 
 本專案由 [Txaion](https://txaion.com) 開發與維護。
 
-目前版本為 `0.1.0`，支援 Python 3.10 以上版本。
+目前版本為 `0.1.1`，支援 Python 3.10 以上版本。
 
 ## 安裝
 
-從本專案目錄安裝：
+從 PyPI 安裝最新版本：
 
 ```bash
-python -m pip install .
+pip install txaion-model-pricing
 ```
 
-開發環境可安裝測試與建置工具：
+若要進行本機開發，請 clone repository 後安裝開發依賴：
 
 ```bash
 python -m pip install -e ".[dev]"
@@ -46,6 +46,7 @@ python -m pip install -e ".[dev]"
 from txaion_model_pricing import (
     calculate_cost,
     count_models,
+    get_available_token_price_fields,
     get_model_details,
 )
 
@@ -54,13 +55,22 @@ print(count_models())
 input_cost = calculate_cost("gpt-4o", 1_000_000, "input")
 output_cost = calculate_cost("gpt-4o", 1_000_000, "output")
 cached_cost = calculate_cost("gpt-4o", 1_000_000, "cached")
+priority_cost = calculate_cost(
+    "azure_ai/gpt-5.5",
+    1_000_000,
+    "input_cost_per_token_priority",
+)
 
 print(input_cost)   # Decimal("2.5000000")
 print(output_cost)  # Decimal("10.00000")
 print(cached_cost)  # Decimal("1.25000000")
+print(priority_cost)  # Decimal("10.00000")
 
 details = get_model_details("gpt-4o")
 print(details["max_input_tokens"])
+
+fields = get_available_token_price_fields("azure_ai/gpt-5.5")
+print("input_cost_per_token_priority" in fields)  # True
 ```
 
 所有成本均以 `decimal.Decimal` 回傳；套件不會自行四捨五入或轉換貨幣。
@@ -81,6 +91,17 @@ print(details["max_input_tokens"])
 
 `tokens` 必須是非負整數。價格資料缺少指定欄位時，套件不會將成本視為零，
 也不會退回其他價格。
+
+除了三個簡稱外，`token_type` 也可以傳入模型快照實際包含的 scalar
+per-token 原始價格欄位，例如 `input_cost_per_token_priority`、
+`output_cost_per_reasoning_token` 或 `cache_creation_input_token_cost`。
+即使欄位名稱含有 token 閾值，只要實際按 character、image、second、page、
+request 或 session 計價，就不會被接受。
+
+### `get_available_token_price_fields(model) -> tuple[str, ...]`
+
+回傳該模型可用的 scalar per-token 原始價格欄位，結果排序固定。選擇非必要
+或供應商特有欄位前，可先用此 API 查詢。
 
 ### `get_model_details(model) -> dict`
 
@@ -104,8 +125,10 @@ try:
 except NotFound:
     ...
 except PriceUnavailableError:
+    # 欄位名稱有效，但此模型沒有提供該價格。
     ...
 except (InvalidTokenCountError, InvalidTokenTypeError):
+    # token 數量或價格欄位名稱無效。
     ...
 ```
 
@@ -128,9 +151,10 @@ python scripts/update_prices.py <commit-or-tag>
 
 ## 限制
 
-- `0.1.0` 僅計算 token-based input、output 與 cached input 成本。
-- 圖片、音訊、搜尋、工具呼叫、工作階段及儲存空間等計價方式尚未納入
-  `calculate_cost()`。
+- `0.1.1` 僅計算 scalar per-token 欄位的成本。
+- 圖片、字元、秒數、頁數、request、session、搜尋、工具呼叫及儲存空間等
+  非 token 單位計價尚未納入 `calculate_cost()`。若快照以 per-token 價格表示
+  音訊內容，對應的 audio token 欄位仍可使用。
 - 模型供應商可能隨時調整價格；本套件結果取決於內附快照，不保證與供應商
   當下價格一致。進行實際帳務或預算控管前，請核對供應商官方價格。
 

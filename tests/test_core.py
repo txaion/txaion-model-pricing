@@ -17,6 +17,7 @@ from txaion_model_pricing import (
     PriceUnavailableError,
     calculate_cost,
     count_models,
+    get_available_token_price_fields,
     get_model_details,
 )
 
@@ -39,6 +40,44 @@ def test_calculate_known_gpt_4o_cost(
     assert result == expected
 
 
+@pytest.mark.parametrize(
+    ("model", "price_field", "expected"),
+    [
+        (
+            "azure_ai/gpt-5.5",
+            "input_cost_per_token_priority",
+            Decimal("10"),
+        ),
+        (
+            "dashscope/qwen-plus-2025-04-28",
+            "output_cost_per_reasoning_token",
+            Decimal("4"),
+        ),
+        (
+            "amazon.nova-2-pro-preview-20251202-v1:0",
+            "input_cost_per_audio_token",
+            Decimal("2.1875"),
+        ),
+        (
+            "anthropic.claude-3-5-haiku-20241022-v1:0",
+            "cache_creation_input_token_cost",
+            Decimal("1"),
+        ),
+        (
+            "anthropic.claude-3-5-sonnet-20240620-v1:0",
+            "input_cost_per_token_above_200k_tokens",
+            Decimal("6"),
+        ),
+    ],
+)
+def test_calculate_cost_accepts_raw_token_price_fields(
+    model: str,
+    price_field: str,
+    expected: Decimal,
+) -> None:
+    assert calculate_cost(model, 1_000_000, price_field) == expected
+
+
 def test_zero_tokens_costs_zero() -> None:
     assert calculate_cost("gpt-4o", 0, "input") == Decimal(0)
 
@@ -54,6 +93,19 @@ def test_invalid_token_type_uses_public_error() -> None:
         calculate_cost("gpt-4o", 100, "banana")
 
 
+@pytest.mark.parametrize("token_type", ["max_tokens", "supports_vision", None])
+def test_metadata_and_non_string_token_types_are_rejected(
+    token_type: object,
+) -> None:
+    with pytest.raises(InvalidTokenTypeError):
+        calculate_cost("gpt-4o", 100, token_type)  # type: ignore[arg-type]
+
+
+def test_valid_token_price_field_missing_from_model_is_unavailable() -> None:
+    with pytest.raises(PriceUnavailableError):
+        calculate_cost("gpt-4o", 100, "made_up_cost_per_token")
+
+
 def test_unknown_model_uses_public_error() -> None:
     with pytest.raises(NotFound):
         calculate_cost("does-not-exist", 100, "input")
@@ -62,6 +114,49 @@ def test_unknown_model_uses_public_error() -> None:
 def test_missing_price_is_not_treated_as_zero() -> None:
     with pytest.raises(PriceUnavailableError):
         calculate_cost("256-x-256/dall-e-2", 1, "input")
+
+
+@pytest.mark.parametrize(
+    "invalid_price",
+    [True, -0.1, float("nan"), float("inf"), "0.1", {"value": 0.1}],
+)
+def test_invalid_scalar_token_prices_are_unavailable(
+    invalid_price: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        core,
+        "_PRICES",
+        {"synthetic": {"input_cost_per_token": invalid_price}},
+    )
+
+    with pytest.raises(PriceUnavailableError):
+        calculate_cost("synthetic", 100, "input")
+
+    assert get_available_token_price_fields("synthetic") == ()
+
+
+def test_available_token_price_fields_are_sorted_and_model_specific() -> None:
+    fields = get_available_token_price_fields("azure_ai/gpt-5.5")
+
+    assert fields == tuple(sorted(fields))
+    assert "input_cost_per_token" in fields
+    assert "input_cost_per_token_priority" in fields
+    assert "output_cost_per_token_priority" in fields
+    assert "max_tokens" not in fields
+
+
+def test_available_fields_exclude_non_token_units_with_token_thresholds() -> None:
+    fields = get_available_token_price_fields("gemini/gemma-3-27b-it")
+
+    assert "input_cost_per_character_above_128k_tokens" not in fields
+    assert "input_cost_per_image_above_128k_tokens" not in fields
+    assert "input_cost_per_audio_per_second_above_128k_tokens" not in fields
+
+
+def test_available_token_price_fields_reject_unknown_model() -> None:
+    with pytest.raises(NotFound):
+        get_available_token_price_fields("does-not-exist")
 
 
 def test_metadata_entry_is_not_a_model() -> None:

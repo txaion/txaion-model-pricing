@@ -25,17 +25,18 @@ and cached-input tokens.
 
 Developed and maintained by [Txaion](https://txaion.com).
 
-The current version is `0.1.0` and requires Python 3.10 or later.
+The current version is `0.1.1` and requires Python 3.10 or later.
 
 ## Installation
 
-Install the package from the project directory:
+Install the latest release from PyPI:
 
 ```bash
-python -m pip install .
+pip install txaion-model-pricing
 ```
 
-Install the development dependencies for testing and building:
+For local development, clone the repository and install it with the development
+dependencies:
 
 ```bash
 python -m pip install -e ".[dev]"
@@ -44,20 +45,34 @@ python -m pip install -e ".[dev]"
 ## Quick start
 
 ```python
-from txaion_model_pricing import calculate_cost, count_models, get_model_details
+from txaion_model_pricing import (
+    calculate_cost,
+    count_models,
+    get_available_token_price_fields,
+    get_model_details,
+)
 
 print(count_models())
 
 input_cost = calculate_cost("gpt-4o", 1_000_000, "input")
 output_cost = calculate_cost("gpt-4o", 1_000_000, "output")
 cached_cost = calculate_cost("gpt-4o", 1_000_000, "cached")
+priority_cost = calculate_cost(
+    "azure_ai/gpt-5.5",
+    1_000_000,
+    "input_cost_per_token_priority",
+)
 
 print(input_cost)   # Decimal("2.5000000")
 print(output_cost)  # Decimal("10.00000")
 print(cached_cost)  # Decimal("1.25000000")
+print(priority_cost)  # Decimal("10.00000")
 
 details = get_model_details("gpt-4o")
 print(details["max_input_tokens"])
+
+fields = get_available_token_price_fields("azure_ai/gpt-5.5")
+print("input_cost_per_token_priority" in fields)  # True
 ```
 
 All costs are returned as `decimal.Decimal` values. The package does not round
@@ -82,6 +97,19 @@ Calculates the USD cost using the model's per-token price:
 unavailable, the package does not treat the cost as zero or fall back to a
 different price.
 
+In addition to the three aliases, `token_type` may be a raw scalar per-token
+price field present in the model snapshot, such as
+`input_cost_per_token_priority`, `output_cost_per_reasoning_token`, or
+`cache_creation_input_token_cost`. Fields priced per character, image, second,
+page, request, or session are not accepted, even when their names mention a
+token threshold.
+
+### `get_available_token_price_fields(model) -> tuple[str, ...]`
+
+Returns a stable, sorted tuple of the raw scalar per-token price fields
+available for the model. Use this discovery API before selecting optional or
+provider-specific pricing fields.
+
 ### `get_model_details(model) -> dict`
 
 Returns a deep copy of the model data. Modifying the returned value does not
@@ -105,8 +133,10 @@ try:
 except NotFound:
     ...
 except PriceUnavailableError:
+    # The field name is valid, but this model does not provide that price.
     ...
 except (InvalidTokenCountError, InvalidTokenTypeError):
+    # The token count or price-field name is invalid.
     ...
 ```
 
@@ -131,10 +161,11 @@ the snapshot and its metadata. Moving refs such as `main`, `master`, and
 
 ## Limitations
 
-- Version `0.1.0` only calculates token-based input, output, and cached-input
-  costs.
-- Image, audio, search, tool-call, session, and storage pricing are not
-  supported by `calculate_cost()`.
+- Version `0.1.1` only calculates costs from scalar per-token fields.
+- Image-, character-, second-, page-, request-, session-, search-, tool-call-,
+  and storage-based pricing are not supported by `calculate_cost()`. Token
+  fields for audio content are supported when the snapshot expresses their
+  unit as a per-token price.
 - Model providers may change their prices at any time. Results depend on the
   bundled snapshot and may not match current provider pricing. Verify official
   provider prices before using the results for billing or budget enforcement.

@@ -56,6 +56,31 @@ def test_valid_snapshot_shape_is_accepted() -> None:
     update_prices._validate(json.dumps(data).encode())
 
 
+@pytest.mark.parametrize(
+    "invalid_price",
+    [True, -0.1, float("nan"), float("inf"), "0.1", {"value": 0.1}],
+)
+def test_invalid_token_prices_are_rejected(invalid_price: object) -> None:
+    data = {"sample_spec": {}}
+    data.update({f"model-{index}": {} for index in range(99)})
+    data["priced-model"] = {"input_cost_per_token": invalid_price}
+
+    with pytest.raises(RuntimeError, match="token 價格欄位"):
+        update_prices._validate(json.dumps(data).encode())
+
+
+def test_structured_non_token_price_is_allowed() -> None:
+    data = {"sample_spec": {}}
+    data.update({f"model-{index}": {} for index in range(99)})
+    data["search-model"] = {
+        "search_context_cost_per_query": {
+            "search_context_size_low": 0.01,
+        }
+    }
+
+    update_prices._validate(json.dumps(data).encode())
+
+
 def test_atomic_write_replaces_target(tmp_path) -> None:
     target = tmp_path / "prices.json"
     target.write_bytes(b"old")

@@ -9,10 +9,11 @@ from .core import (
     TokenType,
     calculate_cost,
     count_models,
+    get_available_token_price_fields,
     get_model_details,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "InvalidTokenCountError",
@@ -24,5 +25,6 @@ __all__ = [
     "__version__",
     "calculate_cost",
     "count_models",
+    "get_available_token_price_fields",
     "get_model_details",
 ]

@@ -2,7 +2,7 @@
   "source": "LiteLLM model price and context-window data",
   "repository": "https://github.com/BerriAI/litellm",
   "upstream_file": "model_prices_and_context_window.json",
-  "upstream_ref": "ae81625ee6659c96abf87e84e74840f9c0b3164a",
-  "retrieved_at": "2026-07-25T23:33:21Z",
-  "sha256": "012fbba3de82c3cf38bc601cf834a4dc175173ab2e71ff727a5e7f22b6c15255"
+  "upstream_ref": "litellm_internal_staging",
+  "retrieved_at": "2026-07-26T02:04:24Z",
+  "sha256": "af3e192b7dc79c80e7021d319b7c16a25188dff7275d20b1fe32f6f4a1151c56"
 }

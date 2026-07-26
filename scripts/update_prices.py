@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -22,6 +23,10 @@ RAW_URL = (
 )
 MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024
 REF_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+TOKEN_PRICE_FIELD_PATTERN = re.compile(
+    r"(?:^|_)cost_per_(?:[a-z0-9]+_)*token(?:_|$)"
+    r"|(?:^|_)token_cost(?:_|$)"
+)
 MOVING_REFS = frozenset({"main", "master", "latest", "head"})
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,9 +75,24 @@ def _validate(payload: bytes) -> None:
         raise RuntimeError("上游價格資料必須是包含模型項目的 JSON object")
     if not isinstance(data.get("sample_spec"), dict):
         raise RuntimeError("上游價格資料缺少 sample_spec")
-    if any(not isinstance(key, str) or not isinstance(value, dict)
-           for key, value in data.items()):
+    if any(
+        not isinstance(key, str) or not isinstance(value, dict)
+        for key, value in data.items()
+    ):
         raise RuntimeError("上游價格資料包含無效模型項目")
+
+    for model, details in data.items():
+        for field, value in details.items():
+            if not TOKEN_PRICE_FIELD_PATTERN.search(field):
+                continue
+            if (
+                type(value) not in (int, float)
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise RuntimeError(
+                    f"模型 {model!r} 的 token 價格欄位 {field!r} 無效"
+                )
 
 
 def _atomic_write(path: Path, content: bytes) -> None:
