@@ -1,0 +1,2 @@
+include scripts/update_prices.py
+include README.zh-TW.md
